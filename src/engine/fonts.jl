@@ -39,7 +39,7 @@ const _default_font_mapping = Dict(
     :digit => :regular,
     :function => :regular,
     :punctuation => :regular,
-    :symbol => :math,
+    :symbol => :italic,
     :char => :italic
 )
 
