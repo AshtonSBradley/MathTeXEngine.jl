@@ -30,11 +30,11 @@ const _default_fonts = Dict(
     :italic => joinpath("NewComputerModern", "NewCM10-Italic.otf"),
     :bold => joinpath("NewComputerModern", "NewCM10-Bold.otf"),
     :bolditalic => joinpath("NewComputerModern", "NewCM10-BoldItalic.otf"),
-    :math => joinpath("NewComputerModern", "NewCMMath-Regular.otf")
+    :math => joinpath("NewComputerModern", "NewCM10-Italic.otf")
 )
 
 const _default_font_mapping = Dict(
-    :text => :italic,
+    :text => :regular,
     :delimiter => :regular,
     :digit => :regular,
     :function => :regular,
