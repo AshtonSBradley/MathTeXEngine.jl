@@ -34,12 +34,12 @@ const _default_fonts = Dict(
 )
 
 const _default_font_mapping = Dict(
-    :text => :regular,
+    :text => :italic,
     :delimiter => :regular,
     :digit => :regular,
     :function => :regular,
     :punctuation => :regular,
-    :symbol => :italic,
+    :symbol => :math,
     :char => :italic
 )
 
