@@ -26,6 +26,7 @@ function tex_layout(expr, state)
     head = expr.head
     args = [expr.args...]
     shrink = 0.6
+    italic_correction = state.tex_mode == :inline_math && italic_correction_enabled[]
 
     try
         if isleaf(expr)  # :char, :delimiter, :digit, :punctuation, :symbol
@@ -50,11 +51,9 @@ function tex_layout(expr, state)
 
             return Group(
                 [core, accent],
-                Point2f[
-                    (0, 0),
-                    (x + hmid(core) - hmid(accent), y)
-                ],
-                [1, 1]
+                Point2f[(0, 0), (x + hmid(core) - hmid(accent), y)],
+                [1, 1];
+                slanted = is_slanted(core),
             )
         elseif head == :decorated
             core, sub, super = tex_layout.(args, state)
@@ -74,13 +73,16 @@ function tex_layout(expr, state)
                 Point2f[
                     (0, 0),
                     (
-                        # The logic is to have the ink of the subscript starts
-                        # where the ink of the unshrink glyph would
-                        hadvance(core) + (1 - shrink) * leftinkbound(sub),
-                        -0.2
+                        # Respect italic overhangs so lower scripts do not
+                        # tuck under the visible ink of the core glyph.
+                        max(hadvance(core), rightinkbound(core)) +
+                        (1 - shrink) * leftinkbound(sub),
+                        -0.2,
                     ),
-                    ( super_x, super_y)],
-                [1, shrink, super_shrink]
+                    (super_x, super_y),
+                ],
+                [1, shrink, super_shrink];
+                slanted = is_slanted(core) || is_slanted(super),
             )
         elseif head == :delimited
             elements = tex_layout.(args, state)
@@ -90,20 +92,22 @@ function tex_layout(expr, state)
             left_scale = max(1, height / inkheight(left))
             right_scale = max(1, height / inkheight(right))
             scales = [left_scale, 1, right_scale]
-                
+
             dxs = hadvance.(elements) .* scales
             xs = [0, cumsum(dxs[1:end-1])...]
 
             # TODO Height calculation for the parenthesis looks wrong
             # TODO Check what the algorithm should be there
             # Center the delimiters in the middle of the bot and top baselines ?
-            return Group(elements, 
+            return Group(
+                elements,
                 Point2f[
                     (xs[1], -bottominkbound(left) + bottominkbound(content)),
                     (xs[2], 0),
-                    (xs[3], -bottominkbound(right) + bottominkbound(content))
+                    (xs[3], -bottominkbound(right) + bottominkbound(content)),
                 ],
-                scales
+                scales;
+                slanted = is_slanted(right),
             )
         elseif head == :font
             modifier, content = args
@@ -133,12 +137,13 @@ function tex_layout(expr, state)
 
             return Group(
                 [line, numerator, denominator],
-                Point2f[(0, y0), (x1, ytop), (x2, ybottom)]
+                Point2f[(0, y0), (x1, ytop), (x2, ybottom)];
+                slanted = is_slanted(numerator) || is_slanted(denominator),
             )
         elseif head == :function
             name = args[1]
             elements = TeXChar.(collect(name), state, Ref(:function))
-            return horizontal_layout(elements)
+            return horizontal_layout(elements; italic_correction)
         elseif head == :glyph
             font_id, glyph_id = argument_as_string.(args)
             font_id = Symbol(font_id)
@@ -147,11 +152,18 @@ function tex_layout(expr, state)
             return TeXChar(glyph_id, font, state.font_family, false, '?')
         elseif head in (:group, :inline_math, :line)
             mode = (head == :inline_math) ? :inline_math : state.tex_mode
-            elements = tex_layout.(args, change_mode(state, mode))
+            child_state = change_mode(state, mode)
+            elements = tex_layout.(args, child_state)
             if isempty(elements)
                 return Space(0.0)
             end
-            return horizontal_layout(elements)
+
+            if mode == :inline_math
+                elements = _add_function_spacing(args, elements)
+            end
+
+            italic_correction = mode == :inline_math && italic_correction_enabled[]
+            return horizontal_layout(elements; italic_correction)
         elseif head == :integral
             pad = 0.1
             int, sub, super = tex_layout.(args, state)
@@ -162,14 +174,12 @@ function tex_layout(expr, state)
                     (0, 0),
                     (
                         0.15 - inkwidth(sub)*shrink/2,
-                        bottominkbound(int) - topinkbound(sub)*shrink - pad
+                        bottominkbound(int) - topinkbound(sub)*shrink - pad,
                     ),
-                    (
-                        0.85 - inkwidth(super)*shrink/2,
-                        topinkbound(int) + pad
-                    )
+                    (0.85 - inkwidth(super)*shrink/2, topinkbound(int) + pad),
                 ],
-                [1, shrink, shrink]
+                [1, shrink, shrink];
+                slanted = is_slanted(int),
             )
         elseif head == :lines
             length(args) == 1 && return tex_layout(only(args), state)
@@ -192,19 +202,17 @@ function tex_layout(expr, state)
 
             return Group(
                 [hline, content],
-                Point2f[
-                    (0.25, y + lw/2 + 0.2),
-                    (0, 0)
-                ]
+                Point2f[(0.25, y + lw/2 + 0.2), (0, 0)];
+                slanted = is_slanted(content),
             )
         elseif head == :primes
             primes = [TeXExpr(:char, ''') for _ in 1:only(args)]
-            return horizontal_layout(tex_layout.(primes, state))
+            return horizontal_layout(tex_layout.(primes, state); italic_correction)
         elseif head == :space
             return Space(args[1])
         elseif head == :spaced
             sym = tex_layout(args[1], state)
-            return horizontal_layout([Space(0.2), sym, Space(0.2)])
+            return horizontal_layout([Space(0.2), sym, Space(0.2)]; italic_correction)
         elseif head == :sqrt
             content = tex_layout(args[1], state)
             h = inkheight(content)
@@ -233,8 +241,8 @@ function tex_layout(expr, state)
                     (0, y0),
                     (rightinkbound(sqrt) - lw/2, y + lw/2),
                     (rightinkbound(sqrt), 0),
-                    (rightinkbound(content), 0)
-                ]
+                    (rightinkbound(content), 0),
+                ],
             )
         elseif head == :text
             modifier, content = args
@@ -260,9 +268,10 @@ function tex_layout(expr, state)
                 Point2f[
                     (x0, y0),
                     (x0 + dxsub, y0 + under_offset),
-                    (x0 + dxsuper, y0 + over_offset)
+                    (x0 + dxsuper, y0 + over_offset),
                 ],
-                [1, shrink, shrink]
+                [1, shrink, shrink];
+                slanted = is_slanted(core),
             )
         elseif head == :unicode
             font_id, glyph_id = argument_as_string.(args)
@@ -287,11 +296,91 @@ tex_layout(::Nothing, state) = Space(0)
 
 Layout the elements horizontally, like normal text.
 """
-function horizontal_layout(elements)
+function horizontal_layout(elements; italic_correction = false)
+    if italic_correction
+        elements = _italic_correction(elements)
+    end
+
     dxs = hadvance.(elements)
     xs = [0, cumsum(dxs[1:end-1])...]
 
-    return Group(elements, Point2f.(xs, 0))
+    return Group(elements, Point2f.(xs, 0); slanted = is_slanted(last(elements)))
+end
+
+function _add_function_spacing(args, elements)
+    spaced = TeXElement[]
+
+    for (i, elem) in enumerate(elements)
+        push!(spaced, elem)
+        if args[i].head == :function && _function_takes_space(args, i)
+            push!(spaced, Space(1/6))
+        end
+    end
+
+    return spaced
+end
+
+function _function_takes_space(args, i)
+    for j in (i+1):length(args)
+        arg = args[j]
+        if arg.head == :char && only(arg.args) == ' '
+            continue
+        end
+        return !_is_opening_delimiter(arg)
+    end
+
+    return false
+end
+
+function _is_opening_delimiter(expr)
+    return expr.head == :delimiter && only(expr.args) in ('(', '[', '⟨', '{')
+end
+
+function _italic_correction(elements)
+    corrected = TeXElement[]
+
+    for (i, elem) in enumerate(elements)
+        if i > 1
+            offset = italic_transition_offset(elements[i-1], elem)
+            if offset != 0
+                push!(corrected, Space(offset))
+            end
+        end
+        push!(corrected, elem)
+    end
+
+    return corrected
+end
+
+function italic_transition_offset(prev, elem)
+    (prev isa Space || elem isa Space) && return 0.0
+    is_slanted(prev) == is_slanted(elem) && return 0.0
+
+    if is_slanted(prev) && !is_slanted(elem)
+        height_prev = topinkbound(prev)
+        height_prev <= 0 && return 0.0
+
+        overhang = rightinkbound(prev) - hadvance(prev)
+        overhang <= 0 && return 0.0
+
+        height_elem = topinkbound(elem)
+        return height_prev <= height_elem ? overhang : overhang * height_elem / height_prev
+    elseif !is_slanted(prev) && is_slanted(elem)
+        bearing = leftinkbound(elem)
+
+        if bearing < 0
+            depth_prev = inkheight(prev) - topinkbound(prev)
+            depth_elem = inkheight(elem) - topinkbound(elem)
+            depth_prev <= 0 && return 0.0
+            return depth_prev >= depth_elem ? -bearing : -bearing * depth_prev / depth_elem
+        end
+
+        # Positive left bearings on italic glyphs make e.g. "(t)" look
+        # asymmetric. Remove that extra font-side gap at roman-to-italic edges.
+        return -bearing
+    end
+
+    return 0.0
 end
 
 function layout_text(string, font_family)

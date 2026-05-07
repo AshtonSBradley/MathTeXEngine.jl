@@ -85,6 +85,74 @@ end
         char, pos, size = first(elems)
         @test pos[1] == 2
     end
+
+    @testset "Italic boundary correction" begin
+        old = MathTeXEngine.italic_correction_enabled[]
+        try
+            MathTeXEngine.italic_correction_enabled[] = false
+            without = generate_tex_elements(L"(f)x η(t)")
+
+            MathTeXEngine.italic_correction_enabled[] = true
+            with = generate_tex_elements(L"(f)x η(t)")
+
+            xpos(elems, i) = elems[i][2][1]
+
+            # Issue #142: roman delimiters next to italic glyphs should not
+            # inherit an asymmetric font-side gap.
+            @test xpos(with, 2) > xpos(without, 2)
+            @test xpos(with, 3) > xpos(without, 3)
+
+            # Issue #95: the same boundary correction also applies to lower
+            # case Greek followed by roman delimiters in subscripts/labels.
+            @test MathTeXEngine.is_slanted(with[5][1])
+            @test xpos(with, 7) - xpos(with, 6) < xpos(without, 7) - xpos(without, 6)
+            @test xpos(with, 8) - xpos(with, 7) > xpos(without, 8) - xpos(without, 7)
+        finally
+            MathTeXEngine.italic_correction_enabled[] = old
+        end
+    end
+
+    @testset "Function spacing" begin
+        xpos(elems, i) = elems[i][2][1]
+
+        # Issue #129: LaTeX inserts a thin space after math operators when
+        # the argument is not parenthesized.
+        @test xpos(generate_tex_elements(L"\log x"), 4) >
+              xpos(generate_tex_elements(L"\mathrm{log}x"), 4) + 0.1
+        @test xpos(generate_tex_elements(L"\sin\alpha"), 4) >
+              xpos(generate_tex_elements(L"\mathrm{sin}\alpha"), 4) + 0.1
+
+        # No operator space is inserted before an opening delimiter.
+        @test xpos(generate_tex_elements(L"\log(x)"), 4) ≈
+              xpos(generate_tex_elements(L"\mathrm{log}(x)"), 4)
+    end
+
+    @testset "Subscript spacing respects italic overhangs" begin
+        ink_start(element) = element[2][1] + element[3] * leftinkbound(element[1])
+        ink_end(element) = element[2][1] + element[3] * rightinkbound(element[1])
+
+        font_names = sort(collect(keys(MathTeXEngine.default_font_families)))
+        cases = (L"N_\nu", L"J_\nu", L"x_{\alpha(k)}")
+
+        for font_name in font_names, tex in cases
+            elems = generate_tex_elements(tex, MathTeXEngine.FontFamily(font_name))
+            @test ink_start(elems[2]) + 0.002 >= ink_end(elems[1])
+        end
+
+        elems = generate_tex_elements(L"N_\nu L_\nu A_\nu J_\nu")
+        @test ink_start(elems[2]) >= ink_end(elems[1])
+        @test ink_start(elems[8]) >= ink_end(elems[7])
+
+        # Issue #95 includes a nested subscript case where the inner `(k)`
+        # should stay inside the lower script instead of being squeezed left.
+        for font_name in font_names
+            elems = generate_tex_elements(
+                L"v_{(a + b)_k}^i",
+                MathTeXEngine.FontFamily(font_name),
+            )
+            @test ink_start(elems[7]) + 0.002 >= ink_end(elems[6])
+        end
+    end
 end
 
 @testset "Generate elements" begin
@@ -95,7 +163,8 @@ end
     @test length(elems) == 7
 
     # Check the following does not error
-    tex = L"\lim_{α →\infty} A^j v_{(a + b)_k}^i \sqrt{2} x!= \sqrt{\frac{1+2}{4+a+x}}\int_{0}^{2π} \sin(x) dx"
+    tex =
+        L"\lim_{α →\infty} A^j v_{(a + b)_k}^i \sqrt{2} x!= \sqrt{\frac{1+2}{4+a+x}}\int_{0}^{2π} \sin(x) dx"
     generate_tex_elements(tex)
 
     tex = L"Momentum $p_x$ (a.u.)"

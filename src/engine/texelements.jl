@@ -154,28 +154,43 @@ function TeXChar(char::Char, state::LayoutState, char_type)
     if haskey(font_family.special_chars, char)
         fontpath, id = font_family.special_chars[char]
         font = load_font(fontpath)
-        return TeXChar(id, font, font_family, false, char)
+        return TeXChar(id, font, font_family, is_slanted_math_symbol(char, char_type), char)
     end
 
-    font = get_font(state, char_type)
+    font_id = get_font_identifier(state, char_type)
+    font = get_font(font_family, font_id)
 
     return TeXChar(
         glyph_index(font, char),
         font,
         font_family,
-        is_slanted(state.font_family, char_type),
-        char)
+        font_id == :italic || font_id == :bolditalic,
+        char,
+    )
 end
+
+is_slanted_math_symbol(char, char_type) = char_type == :symbol && is_lowercase_greek(char)
+is_lowercase_greek(char) =
+    'α' <= char <= 'ω' ||
+    char == 'ϕ' ||
+    char == 'ϵ' ||
+    char == 'ϑ' ||
+    char == 'ϰ' ||
+    char == 'ϱ' ||
+    char == 'ϖ'
 
 function TeXChar(name::AbstractString, state::LayoutState, char_type ; represented='?')
     font_family = state.font_family
-    font = get_font(state, char_type)
+    font_id = get_font_identifier(state, char_type)
+    font = get_font(font_family, font_id)
+
     return TeXChar(
         glyph_index(font, name),
         font,
         font_family,
-        is_slanted(state.font_family, char_type),
-        represented)
+        font_id == :italic || font_id == :bolditalic,
+        represented,
+    )
 end
 
 for inkfunc in (:leftinkbound, :rightinkbound, :bottominkbound, :topinkbound)
@@ -289,9 +304,15 @@ struct Group{T} <: TeXElement
     elements::Vector{<:TeXElement}
     positions::Vector{Point2f}
     scales::Vector{T}
+    slanted::Bool
 end
 
-Group(elements, positions) = Group(elements, positions, ones(length(elements)))
+Group(elements, positions, scales; slanted = false) =
+    Group(elements, positions, scales, slanted)
+Group(elements, positions; slanted = false) =
+    Group(elements, positions, ones(length(elements)); slanted)
+
+is_slanted(g::Group) = g.slanted
 
 xpositions(g::Group) = [p[1] for p in g.positions]
 ypositions(g::Group) = [p[2] for p in g.positions]
@@ -334,4 +355,4 @@ end
 xheight(g::Group) = maximum(xheight.(g.elements) .* g.scales)
 
 leftmost_glyph(g::Group) = leftmost_glyph(first(g.elements))
-rightmost_glyph(g::Group) = rightmost_glyph(last(glyph))
+rightmost_glyph(g::Group) = rightmost_glyph(last(g.elements))
